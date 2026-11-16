@@ -1,0 +1,7 @@
+-- Fish in Space: the quest alien's "!" floats and turns (runs on each player's client)
+local mark = script.Parent:WaitForChild("Exclaim")
+local base = mark:GetPivot()
+game:GetService("RunService").RenderStepped:Connect(function()
+	local t = os.clock()
+	mark:PivotTo(base * CFrame.new(0, math.sin(t * 2.2) * 0.3, 0) * CFrame.Angles(0, t * 1.5, 0))
+end)

@@ -1,0 +1,6 @@
+# Full place files are large and contain more than code; only scripts are tracked.
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+*.lock
