@@ -43,11 +43,14 @@ local function newProfile()
 		starterLine = false, -- the Starter Pack's line color
 		groupGift = false, -- got the Join the Group welcome coins
 		questsUnlocked = false, -- Zorp has given you a quest (the catch-4-kinds starter quest is done)
+		receipts = {}, -- the last few developer-product PurchaseIds already granted (so a retried receipt is never granted twice)
 	}
 end
 
+local MAX_RECEIPTS = 50
+
 -- only known settings with the right type survive
-local SETTINGS = { music = "number", sfx = "number", auras = "string", lowGfx = "boolean", hidePlayers = "boolean", announce = "boolean", autoTargets = "string" }
+local SETTINGS = { music = "number", sfx = "number", auras = "string", lowGfx = "boolean", hidePlayers = "boolean", announce = "boolean", autoTargets = "string", shake = "boolean" }
 function Profiles.cleanSettings(raw)
 	local out = {}
 	if typeof(raw) ~= "table" then
@@ -129,6 +132,13 @@ local function sanitize(raw)
 	p.starterLine = raw.starterLine == true
 	p.groupGift = raw.groupGift == true
 	p.questsUnlocked = raw.questsUnlocked == true or typeof(raw.fishQuest) == "table"
+	if typeof(raw.receipts) == "table" then
+		for _, id in raw.receipts do
+			if typeof(id) == "string" and #id <= 64 and #p.receipts < MAX_RECEIPTS then
+				table.insert(p.receipts, id)
+			end
+		end
+	end
 	if typeof(raw.fishQuest) == "table" and Config.BY_ID[raw.fishQuest.id] then
 		local need = math.clamp(math.floor(tonumber(raw.fishQuest.need) or 1), 1, Config.CAT_QUEST.maxCount)
 		local have = math.clamp(math.floor(tonumber(raw.fishQuest.have) or (if raw.fishQuest.caught == true then need else 0)), 0, need)
@@ -172,6 +182,40 @@ function Profiles.save(player: Player)
 	if not ok then
 		dirty[player] = true
 		warn("[FishInSpace] Save failed:", err)
+	end
+end
+
+-- save right now (even if nothing changed) and say whether it worked. Used before telling Roblox a
+-- purchase was granted. With no DataStore (Studio without API access) there is nothing to save to: true.
+function Profiles.saveNow(player: Player): boolean
+	local p = data[player]
+	if not p then
+		return false
+	end
+	if not store then
+		return true
+	end
+	local ok, err = pcall(store.SetAsync, store, "p_" .. player.UserId, p)
+	if ok then
+		dirty[player] = nil
+	else
+		dirty[player] = true
+		warn("[FishInSpace] Save failed:", err)
+	end
+	return ok
+end
+
+-- developer-product receipts already granted to this profile
+function Profiles.hasReceipt(p, purchaseId: string): boolean
+	return table.find(p.receipts, purchaseId) ~= nil
+end
+
+function Profiles.addReceipt(p, purchaseId: string)
+	if not table.find(p.receipts, purchaseId) then
+		table.insert(p.receipts, purchaseId)
+		while #p.receipts > MAX_RECEIPTS do
+			table.remove(p.receipts, 1)
+		end
 	end
 end
 

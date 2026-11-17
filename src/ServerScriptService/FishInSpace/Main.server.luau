@@ -1112,15 +1112,20 @@ task.spawn(function()
 	end
 end)
 
-local granted = {}
+-- Developer products. Roblox may send the same receipt more than once (and to another server), so each
+-- PurchaseId is stored in the player's saved profile together with what it gave. We only answer
+-- PurchaseGranted once that save has gone through; if it fails, Roblox retries the receipt later and the
+-- stored PurchaseId stops it from being granted a second time.
 MarketplaceService.ProcessReceipt = function(info)
-	if granted[info.PurchaseId] then
-		return Enum.ProductPurchaseDecision.PurchaseGranted
-	end
 	local player = Players:GetPlayerByUserId(info.PlayerId)
 	local p = player and Profiles.get(player)
 	if not p then
 		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local purchaseId = tostring(info.PurchaseId)
+	if Profiles.hasReceipt(p, purchaseId) then
+		-- already given: just make sure it is saved
+		return if Profiles.saveNow(player) then Enum.ProductPurchaseDecision.PurchaseGranted else Enum.ProductPurchaseDecision.NotProcessedYet
 	end
 	local pid = info.ProductId
 	if pid == Config.PRODUCTS.STARTER_PACK and pid ~= 0 then
@@ -1150,12 +1155,14 @@ MarketplaceService.ProcessReceipt = function(info)
 			return Enum.ProductPurchaseDecision.NotProcessedYet
 		end
 	end
-	granted[info.PurchaseId] = true
+	Profiles.addReceipt(p, purchaseId)
 	Funnels.step(player, "RobuxShop", 3) -- Purchase Completed (developer product)
 	rebirthCheck(player, p)
 	Profiles.markDirty(player)
-	task.spawn(Profiles.save, player)
 	push(player)
+	if not Profiles.saveNow(player) then
+		return Enum.ProductPurchaseDecision.NotProcessedYet -- given in this session; Roblox retries and the save is tried again
+	end
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 

@@ -281,6 +281,21 @@ end
 local SFX = { cast = "cast", splash = "splash", catch = "catch", tick = "click" }
 _ = sounds
 
+-- game feel: a short camera shake, a tiny impact pause ("hit-stop") and a moment of slow motion for the big
+-- beats (a bite, a rare fish thrashing, the catch). The Screen Shake setting turns all three off.
+local Settings = require(script.Parent:WaitForChild("Settings"))
+local shakeAmp = 0 -- camera shake strength, as a fraction of the view height (decays quickly)
+local hitStop = 0 -- seconds left of the impact pause
+local slowMo = 0 -- seconds left of slow motion
+local function kick(amp: number, freeze: number?, slow: number?)
+	if Settings.get("shake") == false then
+		return
+	end
+	shakeAmp = math.max(shakeAmp, amp)
+	hitStop = math.max(hitStop, freeze or 0)
+	slowMo = math.max(slowMo, slow or 0)
+end
+
 ---------------------------------------------------------------- build the scene once
 
 function newPart(name: string, props): BasePart
@@ -741,10 +756,17 @@ end
 
 ---------------------------------------------------------------- the rare-fish fight
 
+local lostInARow: { [string]: number } = {} -- per rarity, for Config.FIGHT_COMFORT
+
 local function startFight(f)
 	local P = Config.FIGHT[f.def.rarity]
-	local zoneW = math.min(0.6, P.zone * (cast.fightZone or 1))
-	fight = { f = f, P = P, zoneW = zoneW, zone = 0.5 - zoneW / 2, zoneV = 0, fishX = 0.5, target = 0.5, nextMove = 0.4, progress = P.start, t = 0 }
+	local comfort = 1 + Config.FIGHT_COMFORT.perLoss * math.min(lostInARow[f.def.rarity] or 0, Config.FIGHT_COMFORT.max)
+	local zoneW = math.min(0.6, P.zone * (cast.fightZone or 1) * comfort)
+	fight = { f = f, P = P, zoneW = zoneW, zone = 0.5 - zoneW / 2, zoneV = 0, fishX = 0.5, target = 0.5, nextMove = 0.4, progress = P.start, t = 0, outside = 0 }
+	if P.surge then
+		fight.nextSurge = P.surge.every[1] + math.random() * (P.surge.every[2] - P.surge.every[1])
+	end
+	kick(0.014, 0.08) -- the bite: a jolt and a split-second pause
 	f.isHooked = true -- (so nothing else touches it while you fight it)
 	f.fighting = true
 	state = "fight"
@@ -755,6 +777,7 @@ local function startFight(f)
 	fightTitle.TextColor3 = col
 	fightFish.Image = Art.fish[f.def.id] or ""
 	fightZone.Size = UDim2.fromScale(zoneW, 1)
+	fightZone.BackgroundColor3 = Ui.GREEN
 	fightPanel.Visible = true
 	hintLabel.Text = ""
 	sound(SFX.catch, 0.6, 0.8)
@@ -772,11 +795,22 @@ local function endFight(won: boolean)
 	local f = F.f
 	f.fighting = nil
 	local col = Config.RARITY[f.def.rarity].color
+	fightZone.BackgroundColor3 = Ui.GREEN
 	if won then
 		f.entry.caught = true
 		table.insert(hooked, f)
+		lostInARow[f.def.rarity] = 0
 		Sounds.play("sparkle", { pitch = 1.2 })
-		banner((if f.entry.size >= 4 then Config.SIZES[f.entry.size].name .. " " else "") .. f.def.name .. " caught!", col)
+		sound(SFX.splash, 0.6, 0.9)
+		kick(0.018, 0.1, 0.45) -- the landing: a big jolt, a pause, then a beat of slow motion
+		local grade = ""
+		for _, g in Config.FIGHT_GRADES do
+			if F.outside <= g.maxOutside then
+				grade = g.name .. "!  "
+				break
+			end
+		end
+		banner(grade .. (if f.entry.size >= 4 then Config.SIZES[f.entry.size].name .. " " else "") .. f.def.name .. " caught!", col)
 		refreshHookIcons()
 		hintLabel.Text = if autoMode then "" elseif #hooked >= cast.hookCap then "HOOK FULL  ·  REEL IT IN" else "HOLD TO REEL  ·  TAP TO ADJUST"
 	else
@@ -788,7 +822,9 @@ local function endFight(won: boolean)
 		f.baseY = f.p.Y
 		f.dartT = 1.4
 		f.speed = math.max(f.speed, 30)
+		lostInARow[f.def.rarity] = (lostInARow[f.def.rarity] or 0) + 1
 		sound(SFX.splash, 0.6, 1.3)
+		kick(0.01)
 		banner(f.def.name .. " got away!", Color3.fromRGB(255, 110, 110))
 		hintLabel.Text = if autoMode then "" else "HOLD TO REEL  ·  TAP TO ADJUST"
 		task.delay(3, function()
@@ -806,12 +842,44 @@ local function updateFight(dt: number)
 	if F.nextMove <= 0 then
 		F.nextMove = P.calm[1] + math.random() * (P.calm[2] - P.calm[1])
 		if math.random() < P.dart then
+			local from = F.fishX
 			F.target = if F.fishX < 0.5 then 0.85 + math.random() * 0.15 else math.random() * 0.15 -- a big dash to the far side
+			kick(0.004) -- you feel it yank the line
+			if P.feint and math.random() < P.feint then
+				F.feintBack = from -- a fake-out: partway there it snaps back
+				F.feintT = 0.22
+			end
 		else
 			F.target = math.clamp(F.fishX + (math.random() - 0.5) * 0.6, 0.03, 0.97)
 		end
 	end
-	F.fishX += (F.target - F.fishX) * (1 - math.exp(-dt * P.speed * 4))
+	if F.feintT then
+		F.feintT -= dt
+		if F.feintT <= 0 then
+			F.target = math.clamp(F.feintBack, 0.03, 0.97)
+			F.feintT, F.feintBack = nil, nil
+		end
+	end
+	-- Epic surges: the bar flashes, then the fish thrashes much faster for a moment
+	local speed = P.speed
+	if P.surge then
+		F.nextSurge -= dt
+		if F.nextSurge <= 0 then
+			F.surgeT = P.surge.time
+			F.nextSurge = P.surge.time + P.surge.every[1] + math.random() * (P.surge.every[2] - P.surge.every[1])
+			kick(0.009)
+		end
+		if F.surgeT then
+			F.surgeT -= dt
+			speed *= P.surge.mult
+			if F.surgeT <= 0 then
+				F.surgeT = nil
+			end
+		end
+		local warning = not F.surgeT and F.nextSurge <= P.surge.warn
+		fightZone.BackgroundColor3 = if F.surgeT then Ui.RED elseif warning then Ui.GOLD else Ui.GREEN
+	end
+	F.fishX += (F.target - F.fishX) * (1 - math.exp(-dt * speed * 4))
 	local fx = math.clamp(F.fishX + math.sin(F.t * 13) * 0.012, 0, 1)
 	-- your catch zone: hold to push it right, let go and it drifts back left
 	local hold = fightHold
@@ -835,6 +903,9 @@ local function updateFight(dt: number)
 		F.zoneV = -math.abs(F.zoneV) * 0.25
 	end
 	local inside = fx >= F.zone and fx <= F.zone + F.zoneW
+	if not inside then
+		F.outside += dt
+	end
 	F.progress = math.clamp(F.progress + (if inside then P.gain else -P.drain) * dt, 0, 1)
 	fightZone.Position = UDim2.fromScale(F.zone, 0)
 	fightZone.BackgroundTransparency = if inside then 0.3 else 0.65
@@ -884,6 +955,9 @@ local function checkCatch(prevHook: Vector2?)
 			sound(SFX.catch, 0.6, 0.9 + Config.RARITY[f.def.rarity].order * 0.08) -- rarer fish pop a little higher
 			if Config.RARITY[f.def.rarity].order >= 3 then
 				Sounds.play("sparkle", { pitch = if f.def.rarity == "Epic" then 0.9 else 1 }) -- a rare one: the harp
+				kick(0.008, 0.05)
+			else
+				kick(0.003) -- a little tug on every bite
 			end
 			local col = Config.RARITY[f.def.rarity].color
 			banner((if f.entry.size >= 4 then Config.SIZES[f.entry.size].name .. " " else "") .. f.def.name .. " hooked!", col)
@@ -990,6 +1064,10 @@ local function drawScene()
 	camera.CameraType = Enum.CameraType.Scriptable
 	camera.FieldOfView = FOV
 	camera.CFrame = CFrame.lookAt(focus + R * CAM_SIDE * dist, focus)
+	if shakeAmp > 0.0005 then
+		local a = shakeAmp * viewH * S
+		camera.CFrame *= CFrame.new((math.random() - 0.5) * 2 * a, (math.random() - 0.5) * 2 * a, 0)
+	end
 	-- the sea darkens with depth (local to this player)
 	local depthHere = math.max(0, cam.Y)
 	workspace.Terrain.WaterColor = if cam.Y > 4 then waterTint(depthHere) else (savedWater or WATER_TINT[1])
@@ -1217,8 +1295,20 @@ function View.init(callbacks)
 	onState = callbacks.onState
 	RunService.RenderStepped:Connect(function(dt)
 		if state ~= "off" then
-			step(math.min(dt, 0.05))
-			SeaDecor.update(math.min(dt, 0.05))
+			local d = math.min(dt, 0.05)
+			shakeAmp *= math.exp(-dt * 14)
+			-- game time: almost frozen during a hit-stop, slower during slow motion
+			if hitStop > 0 then
+				hitStop -= dt
+				d *= 0.05
+			elseif slowMo > 0 then
+				slowMo -= dt
+				d *= 0.35
+			end
+			step(d)
+			SeaDecor.update(d)
+		else
+			shakeAmp, hitStop, slowMo = 0, 0, 0
 		end
 	end)
 end

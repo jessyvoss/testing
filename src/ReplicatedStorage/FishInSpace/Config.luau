@@ -370,8 +370,17 @@ C.FIGHT = {
 	-- simulated win rates (average player / good player and Auto Fish): Rare ~64% / ~94%, Epic ~48% / ~82%
 	-- (made harder: they were ~96% / ~99% and ~63% / ~87%)
 	Rare = { zone = 0.28, speed = 1.05, calm = { 0.42, 0.95 }, dart = 0.26, pull = 2.45, gain = 0.39, drain = 0.31, start = 0.34 },
-	Epic = { zone = 0.27, speed = 1.25, calm = { 0.38, 0.88 }, dart = 0.31, pull = 2.6, gain = 0.36, drain = 0.3, start = 0.34 },
+	-- Epic fish also fight differently, so there is something new to learn: feint = chance a big dash is a
+	-- fake-out (it starts for the far side, then snaps back); surge = every few seconds it thrashes and moves
+	-- surge.mult times faster for surge.time seconds (the bar flashes first so you can react). Its zone is a bit
+	-- wider than before to make up for that (re-check the win rate in play tests).
+	Epic = { zone = 0.29, speed = 1.25, calm = { 0.38, 0.88 }, dart = 0.31, pull = 2.6, gain = 0.36, drain = 0.3, start = 0.34, feint = 0.4, surge = { every = { 2.6, 4.2 }, warn = 0.35, time = 0.55, mult = 1.9 } },
 }
+-- after a fish of a rarity gets away, your next fight with that rarity quietly has a wider catch zone
+-- (+perLoss each loss in a row, up to max); landing one resets it. Nothing on screen says so.
+C.FIGHT_COMFORT = { perLoss = 0.08, max = 3 }
+-- catch grades: how long the fish spent outside your zone during the whole fight
+C.FIGHT_GRADES = { { name = "PERFECT", maxOutside = 0.35 }, { name = "GREAT", maxOutside = 1.5 } }
 
 -- RARE BOOST (Rare Boost product, Server Rare Boost, day 7 of the streak): your area's rarest kind of fish spawns
 -- twice as often. In the Shallows (where the rarest kind is Common) it brings in some Uncommons instead, and while

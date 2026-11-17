@@ -6,6 +6,7 @@
 --   hidePlayers    hide other players (and their fish)
 --   announce       show other players' big catches and server luck as pop-ups
 --   autoTargets    the rarities Auto Fish goes after, e.g. "Rare,Epic"
+--   shake          camera shake and tiny impact pauses when fish bite, fight and land
 local Players = game:GetService("Players")
 local SoundService = game:GetService("SoundService")
 local Lighting = game:GetService("Lighting")
@@ -17,7 +18,7 @@ local Music = require(script.Parent:WaitForChild("Music"))
 local player = Players.LocalPlayer
 local Settings = {}
 
-local DEFAULTS = { music = 1, sfx = 1, auras = "all", lowGfx = false, hidePlayers = false, announce = true, autoTargets = "Common,Uncommon,Rare,Epic" }
+local DEFAULTS = { music = 1, sfx = 1, auras = "all", lowGfx = false, hidePlayers = false, announce = true, autoTargets = "Common,Uncommon,Rare,Epic", shake = true }
 Settings.DEFAULTS = DEFAULTS
 local values = table.clone(DEFAULTS)
 local listeners = {}
