@@ -469,7 +469,10 @@ function Ui.window(parent: Instance, title: string, size: Vector2, onClose: () -
 	local function fit()
 		local cam = workspace.CurrentCamera
 		local vp = if cam then cam.ViewportSize else Vector2.new(1280, 800)
-		scale.Scale = math.clamp(math.min((vp.Y - 60) / size.Y, (vp.X - 30) / size.X), 0.45, 1)
+		-- phones (short screens): use almost the whole screen, so windows (and their text) stay as big as possible
+		local small = vp.Y < 500
+		local mY, mX = if small then 12 else 60, if small then 12 else 30
+		scale.Scale = math.clamp(math.min((vp.Y - mY) / size.Y, (vp.X - mX) / size.X), 0.45, 1)
 	end
 	fit()
 	if workspace.CurrentCamera then

@@ -203,6 +203,9 @@ local spooled = false -- the line has finished paying out to its full length thi
 local lastLayer = 0
 local onFinish: (({ number }) -> ())?
 local onState: ((string) -> ())?
+local onLost: ((number, any) -> ())? -- a Rare/Epic broke free (pool index, fish def): the "keep it" offer
+local shark = nil -- the space shark hunting your catch (see updateShark)
+local sharkRolled = false -- (one roll per cast)
 local autoMode = false
 local autoTargets = { Common = true, Uncommon = true, Rare = true, Epic = true } -- what Auto Fish goes after
 local autoTarget
@@ -287,6 +290,19 @@ local Settings = require(script.Parent:WaitForChild("Settings"))
 local shakeAmp = 0 -- camera shake strength, as a fraction of the view height (decays quickly)
 local hitStop = 0 -- seconds left of the impact pause
 local slowMo = 0 -- seconds left of slow motion
+-- a controller rumble for the big moments (gamepads only; phones don't expose vibration to games)
+local HapticService = game:GetService("HapticService")
+local function rumble(strength: number, seconds: number)
+	pcall(function()
+		local dev = Enum.UserInputType.Gamepad1
+		if HapticService:IsVibrationSupported(dev) and HapticService:IsMotorSupported(dev, Enum.VibrationMotor.Large) then
+			HapticService:SetMotor(dev, Enum.VibrationMotor.Large, strength)
+			task.delay(seconds, function()
+				pcall(HapticService.SetMotor, HapticService, dev, Enum.VibrationMotor.Large, 0)
+			end)
+		end
+	end)
+end
 local function kick(amp: number, freeze: number?, slow: number?)
 	if Settings.get("shake") == false then
 		return
@@ -294,6 +310,9 @@ local function kick(amp: number, freeze: number?, slow: number?)
 	shakeAmp = math.max(shakeAmp, amp)
 	hitStop = math.max(hitStop, freeze or 0)
 	slowMo = math.max(slowMo, slow or 0)
+	if amp >= 0.008 then
+		rumble(math.clamp(amp * 40, 0.3, 0.8), 0.12)
+	end
 end
 
 ---------------------------------------------------------------- build the scene once
@@ -826,6 +845,9 @@ local function endFight(won: boolean)
 		sound(SFX.splash, 0.6, 1.3)
 		kick(0.01)
 		banner(f.def.name .. " got away!", Color3.fromRGB(255, 110, 110))
+		if onLost and not autoMode then
+			onLost(f.entry.i, f.def)
+		end
 		hintLabel.Text = if autoMode then "" else "HOLD TO REEL  ·  TAP TO ADJUST"
 		task.delay(3, function()
 			f.ghost = nil
@@ -1146,7 +1168,103 @@ local function drawScene()
 	end
 end
 
+---------------------------------------------------------------- the space shark
+-- While you reel a fish up through the Reef or The Void a shark may come for it (Config.SHARK). Get the hook above
+-- SHARK.escape before it reaches you, or it takes one fish off the hook. It hunts twice as often in the Abyss.
+
+local function removeShark()
+	if shark and shark.model then
+		shark.model:Destroy()
+	end
+	shark = nil
+end
+
+local function updateShark(dt: number)
+	local SH = Config.SHARK
+	if not shark then
+		if sharkRolled or #hooked == 0 or not SH.layers[Config.layerAt(math.max(0, hook.Y))] then
+			return
+		end
+		sharkRolled = true
+		local chance = SH.chance * (if hook.Y >= Config.ABYSS.from then 2 else 1)
+		if math.random() >= chance then
+			return
+		end
+		local src = FishModels and FishModels:FindFirstChild("rockjaw")
+		if not src then
+			return
+		end
+		local m = src:Clone()
+		local w = 64
+		m:ScaleTo(m:GetScale() * (w * S) / (m:GetAttribute("Length") or 2))
+		for _, pt in m:GetDescendants() do
+			if pt:IsA("BasePart") then
+				pt.Color = pt.Color:Lerp(Color3.fromRGB(40, 44, 70), 0.75)
+				pt.CastShadow = false
+			end
+		end
+		m.Parent = folder
+		local delay = SH.startDelay[1] + math.random() * (SH.startDelay[2] - SH.startDelay[1])
+		shark = { model = m, w = w, dir = -1, p = hook + Vector2.new(170, 90), wait = delay, leaving = false, gone = 0 }
+		placeFish(shark, 0)
+		banner("A SPACE SHARK! REEL UP FAST!", Color3.fromRGB(255, 110, 110))
+		kick(0.006)
+		return
+	end
+	if shark.wait > 0 then
+		shark.wait -= dt
+		return
+	end
+	if not shark.leaving and (#hooked == 0 or hook.Y < SH.escape or state ~= "swim") then
+		shark.leaving = true
+		if #hooked > 0 then
+			banner("You got away from the shark!", Ui.GREEN)
+		end
+	end
+	local target = if shark.leaving then shark.p + Vector2.new(300, 120) else hook
+	local d = target - shark.p
+	if d.Magnitude > 0.1 then
+		shark.p += d.Unit * math.min(d.Magnitude, SH.speed * (if shark.leaving then 1.5 else 1) * dt)
+		shark.dir = if d.X >= 0 then 1 else -1
+	end
+	placeFish(shark, math.sin(os.clock() * 9) * 8)
+	if shark.leaving then
+		shark.gone += dt
+		if shark.gone > 2.5 then
+			removeShark()
+		end
+	elseif (hook - shark.p).Magnitude < 14 then
+		-- got one
+		local f = table.remove(hooked)
+		if f then
+			f.g:Destroy()
+			local i = table.find(fishes, f)
+			if i then
+				table.remove(fishes, i)
+			end
+			banner("The shark stole your " .. f.def.name .. "!", Color3.fromRGB(255, 110, 110))
+			sound(SFX.splash, 0.6, 0.7)
+			kick(0.012, 0.06)
+			refreshHookIcons()
+		end
+		shark.leaving = true
+	end
+end
+
+-- what the next cast reaches (shown before you cast)
+local function aimHint(): string
+	if autoMode then
+		return ""
+	end
+	if cast and cast.maxLen then
+		local li = Config.layerAt(math.max(0, cast.maxLen + C.rodTip.Y - 1))
+		return "TAP TO CAST  ·  REACHES " .. string.upper(Config.LAYERS[li].name)
+	end
+	return "TAP TO CAST"
+end
+
 local function finishCast()
+	removeShark()
 	state = "land"
 	local list = {}
 	for _, f in hooked do
@@ -1170,7 +1288,7 @@ local function finishCast()
 			table.clear(hooked)
 			state = "aim"
 			cast = nil
-			hintLabel.Text = if autoMode then "" else "TAP TO CAST"
+			hintLabel.Text = aimHint()
 			if onState then
 				onState("aim")
 			end
@@ -1255,7 +1373,7 @@ local function step(dt: number)
 		maxDepthSeen = math.max(maxDepthSeen, depth)
 		depthLabel.Text = ("%d M"):format(math.floor(depth))
 		local li = Config.layerAt(depth)
-		layerLabel.Text = string.upper(Config.LAYERS[li].name)
+		layerLabel.Text = if depth >= Config.ABYSS.from then ("THE ABYSS  +%d%%"):format(Config.ABYSS.bonusPct) else string.upper(Config.LAYERS[li].name)
 		if li > lastLayer then
 			lastLayer = li
 			if li > 1 then
@@ -1265,6 +1383,7 @@ local function step(dt: number)
 		camTarget = Vector2.new(math.max(40, hook.X - 6), math.max(-24, hook.Y))
 		updateFish(dt)
 		checkCatch(prevHook)
+		updateShark(dt)
 		if lineLen <= C.minLine or (hook.Y < 0.5 and maxDepthSeen > 8) or now - (cast.t0 or now) > C.maxCastSeconds then
 			finishCast()
 		end
@@ -1293,6 +1412,7 @@ function View.init(callbacks)
 	build()
 	onFinish = callbacks.onFinish
 	onState = callbacks.onState
+	onLost = callbacks.onLost
 	RunService.RenderStepped:Connect(function(dt)
 		if state ~= "off" then
 			local d = math.min(dt, 0.05)
@@ -1363,6 +1483,7 @@ function View.open(ctx)
 end
 
 function View.close()
+	removeShark()
 	if fight then
 		fight = nil
 		fightPanel.Visible = false
@@ -1504,6 +1625,8 @@ function View.launch(serverCast, p: number)
 	end
 	cast.t0 = os.clock()
 	table.clear(hooked)
+	removeShark()
+	sharkRolled = false
 	lastLayer = 1
 	maxDepthSeen = 0
 	spooled = false
@@ -1530,6 +1653,9 @@ end
 -- fish that is still in the server's pool, and add the new ones (replacing what was caught).
 function View.prepare(serverCast)
 	cast = serverCast
+	if state == "aim" then
+		hintLabel.Text = aimHint() -- (now it knows how deep this cast reaches)
+	end
 	local keep = {}
 	for _, e in cast.pool or {} do
 		keep[e.i] = e

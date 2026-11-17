@@ -44,6 +44,15 @@ local function newProfile()
 		groupGift = false, -- got the Join the Group welcome coins
 		questsUnlocked = false, -- Zorp has given you a quest (the catch-4-kinds starter quest is done)
 		receipts = {}, -- the last few developer-product PurchaseIds already granted (so a retried receipt is never granted twice)
+		-- (Nov 2026 features: see Features.luau)
+		codes = {}, -- [CODE] = true once redeemed
+		trap = nil, -- { t = os.time() when set } while the deep-space trap is out
+		questStreak = { day = 0, count = 0 }, -- days in a row with every daily quest claimed
+		questMaster = false, -- the Quest Master line
+		secret = false, -- caught all four kinds of junk: the Golden Leviathan can bite
+		lostStreak = nil, -- { count, day } the daily streak that broke today (can be restored today)
+		lines = {}, -- [line color key] = true, crafted lines
+		luckLadder = 0, -- Luck Upgrade ladder level (0..Config.LUCK_LADDER.max)
 	}
 end
 
@@ -132,6 +141,32 @@ local function sanitize(raw)
 	p.starterLine = raw.starterLine == true
 	p.groupGift = raw.groupGift == true
 	p.questsUnlocked = raw.questsUnlocked == true or typeof(raw.fishQuest) == "table"
+	if typeof(raw.codes) == "table" then
+		for code, v in raw.codes do
+			if typeof(code) == "string" and #code <= 32 and v == true then
+				p.codes[code] = true
+			end
+		end
+	end
+	if typeof(raw.trap) == "table" and tonumber(raw.trap.t) then
+		p.trap = { t = math.min(tonumber(raw.trap.t), os.time()) }
+	end
+	if typeof(raw.questStreak) == "table" then
+		p.questStreak = { day = math.floor(tonumber(raw.questStreak.day) or 0), count = math.max(0, math.floor(tonumber(raw.questStreak.count) or 0)) }
+	end
+	p.questMaster = raw.questMaster == true
+	p.secret = raw.secret == true
+	if typeof(raw.lostStreak) == "table" and tonumber(raw.lostStreak.count) and tonumber(raw.lostStreak.day) then
+		p.lostStreak = { count = math.max(0, math.floor(raw.lostStreak.count)), day = math.floor(raw.lostStreak.day) }
+	end
+	if typeof(raw.lines) == "table" then
+		for key, v in raw.lines do
+			if typeof(key) == "string" and Config.LINE_COLORS[key] and v == true then
+				p.lines[key] = true
+			end
+		end
+	end
+	p.luckLadder = math.clamp(math.floor(tonumber(raw.luckLadder) or 0), 0, Config.LUCK_LADDER.max)
 	if typeof(raw.receipts) == "table" then
 		for _, id in raw.receipts do
 			if typeof(id) == "string" and #id <= 64 and #p.receipts < MAX_RECEIPTS then

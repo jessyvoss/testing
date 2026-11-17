@@ -10,6 +10,7 @@ local Config = require(Shared.Config)
 local Art = require(Shared.Art)
 local FishAura = require(Shared.FishAura)
 local Profiles = require(script.Parent.Profiles)
+local Features = require(script.Parent.Features) -- the Nov 2026 features (meteor shower, crafting, trap, ...)
 -- analytics funnels (ServerScriptService.Analytics); these only send from the published game's server
 local AnalyticsFolder = game:GetService("ServerScriptService"):WaitForChild("Analytics")
 local Onboarding = require(AnalyticsFolder:WaitForChild("Onboarding"))
@@ -120,7 +121,7 @@ local function cargoCap(player: Player, p): number
 	if hasPass(player, "BIG_BUCKET") then
 		cap = math.floor(cap * (1 + Config.BIG_BUCKET_BONUS))
 	end
-	return cap
+	return cap + (player:GetAttribute("BucketPlus") or 0) -- (the Bucket +20 product, this server only)
 end
 
 local function hookCap(player: Player, p): number
@@ -185,7 +186,7 @@ local function cargoValue(player: Player, p): number
 end
 
 local function luckActive(p): boolean
-	return os.time() < math.max(p.luckUntil, serverLuckUntil)
+	return os.time() < math.max(p.luckUntil, serverLuckUntil) or Features.meteorActive()
 end
 
 -- What the client needs to draw menus. Small and safe to send often.
@@ -198,7 +199,7 @@ local function snapshot(player: Player)
 	for key in Config.PASSES do
 		passes[key] = hasPass(player, key)
 	end
-	return {
+	local out = {
 		coins = p.coins,
 		upgrades = table.clone(p.upgrades),
 		cargo = p.cargo,
@@ -223,6 +224,8 @@ local function snapshot(player: Player)
 		starterLine = p.starterLine,
 		fishQuest = p.fishQuest,
 	}
+	Features.snapshot(player, p, out)
+	return out
 end
 
 -- numbers the lobby leaderboards rank by (kept on the player as attributes)
@@ -321,6 +324,7 @@ QuestRF.OnServerInvoke = function(player: Player, req)
 				if q.id == req.id and q.progress >= q.goal and not q.claimed then
 					q.claimed = true
 					Profiles.addCoins(player, q.coins)
+					Features.onQuestClaimed(player, p)
 					Profiles.markDirty(player)
 					push(player)
 					return { ok = true, coins = q.coins, daily = p.quests.daily }
@@ -381,9 +385,9 @@ end
 -- when your Line Length or a luck boost changes what lives within reach.
 local seas: { [Player]: any } = {}
 
--- luck = 1 while a Rare Boost is on, plus 10 x the Lucky Charm perk level
+-- luck = 1000 while a Rare Boost is on, plus 10 x (Lucky Charm perk level + half a level per Luck Upgrade)
 local function layerWeights(li: number, luck: number)
-	return Config.layerWeights(li, luck % 10 >= 1, luck // 10)
+	return Config.layerWeights(li, luck >= 1000, (luck % 1000) / 10)
 end
 
 -- Where the hook is at a given depth: it lands at your Distance Throw, sinks almost straight down (drifting
@@ -397,11 +401,13 @@ local function hookX(depth: number, maxLen: number, reach: number): number
 	return math.min(arc, drop)
 end
 
-local function newEntry(rng, i: number, li: number, maxDepth: number, luck: number, maxLen: number, reach: number, others: { any }?)
+local function newEntry(rng, i: number, li: number, maxDepth: number, luck: number, maxLen: number, reach: number, others: { any }?, p: any?)
 	local layer = Config.LAYERS[li]
 	local rarity = pickWeighted(rng, layerWeights(li, luck))
 	local list = byRarity[rarity]
 	local f = list[rng:NextInteger(1, #list)]
+	f = Features.swapSpecial(rng, li, f, p) -- (now and then a holiday fish or the secret fish instead)
+	rarity = f.rarity
 	local lo = math.max(layer.from + 12, Config.CAST.fishMinDepth or 6)
 	local hi = math.min(layer.to - 12, maxDepth - 10)
 	-- a spot along the hook's path, kept apart from the other fish (best of a few tries)
@@ -479,7 +485,7 @@ end
 local function buildPool(player: Player, p)
 	local maxLen = Config.upgradeValue("tether", p.upgrades.tether)
 	local maxDepth = maxLen + Config.CAST.rodTip.Y
-	local luck = (if luckActive(p) then 1 else 0) + 10 * (p.perks.lucky or 0) -- Rare Boost + Lucky Charm
+	local luck = (if luckActive(p) then 1000 else 0) + 10 * ((p.perks.lucky or 0) + 0.5 * (p.luckLadder or 0)) -- Rare Boost + Lucky Charm + Luck Upgrades
 	local reach = math.max(Config.upgradeValue("throw", p.upgrades.throw or 0), Config.CAST.minReach or 0)
 	-- Studio only, for recording the trailer: the player attribute TrailerVoid stocks only The Void (more fish there),
 	-- so a cast sinks straight past the empty upper areas to the Epics
@@ -494,7 +500,7 @@ local function buildPool(player: Player, p)
 	for li, layer in Config.LAYERS do
 		if layer.from < maxDepth - 4 and (not trailer or li == #Config.LAYERS) then
 			for _ = 1, (if trailer then 10 else layer.count or Config.CAST.poolPerLayer) do
-				table.insert(pool, newEntry(rng, #pool + 1, li, maxDepth, luck, maxLen, reach, pool))
+				table.insert(pool, newEntry(rng, #pool + 1, li, maxDepth, luck, maxLen, reach, pool, p))
 			end
 		end
 	end
@@ -507,7 +513,7 @@ local function restock(player: Player, idx: number)
 	local sea = seas[player]
 	local old = sea and sea.pool[idx]
 	if old then
-		sea.pool[idx] = newEntry(sea.rng, idx, old.layer, sea.maxDepth, sea.luck, sea.maxLen, sea.reach, sea.pool)
+		sea.pool[idx] = newEntry(sea.rng, idx, old.layer, sea.maxDepth, sea.luck, sea.maxLen, sea.reach, sea.pool, Profiles.get(player))
 	end
 end
 
@@ -555,6 +561,7 @@ FishRF.OnServerInvoke = function(player: Player, req)
 		end
 		-- the rare-fish fight: a wider catch zone with the God Rod and the Steady Hands perk
 		reply.fightZone = (1 + 0.1 * (p.perks.steady or 0)) * (if hasPass(player, "GOD_ROD") then 1.3 else 1)
+		Features.onCastStart(player) -- (for the fishing crew bonus)
 		Onboarding.markStep(player, 2) -- First Cast
 		return reply
 	elseif req.action == "finish" then
@@ -585,6 +592,7 @@ FishRF.OnServerInvoke = function(player: Player, req)
 				if space > 0 then
 					space -= 1
 					local bonus = math.floor(Config.depthBonus(entry.id, entry.depth) * (1 + 0.2 * (p.perks.diver or 0))) -- Deep Diver perk
+					bonus += Features.catchBonus(player, entry) -- fishing crew + the Abyss
 					local item = { id = entry.id, size = entry.size, bonus = bonus }
 					table.insert(p.cargo, item)
 					local f = Config.BY_ID[entry.id]
@@ -597,6 +605,7 @@ FishRF.OnServerInvoke = function(player: Player, req)
 					if value > p.stats.biggest then
 						p.stats.biggest = value
 					end
+					Features.onCatch(player, p, item, value) -- (a surprise pearl, the secret signal)
 					track(player, "catch", 1)
 					local order = Config.RARITY[f.rarity].order
 					if order >= 4 then
@@ -679,6 +688,10 @@ FishRF.OnServerInvoke = function(player: Player, req)
 		end
 		return { ok = true }
 	end
+	local fr = Features.fishAction(player, p, req)
+	if fr then
+		return fr
+	end
 	return { ok = false }
 end
 
@@ -710,6 +723,7 @@ local function sellAll(player: Player)
 	p.cargo = {}
 	p.earned += total
 	Profiles.addCoins(player, total)
+	Features.onSell(player, total)
 	track(player, "sell", total)
 	player:SetAttribute("Earned", p.earned)
 	Profiles.markDirty(player)
@@ -875,6 +889,12 @@ ShopRF.OnServerInvoke = function(player: Player, req)
 		return { ok = true }
 	elseif req.action == "profile" then
 		return { ok = true, profile = snapshot(player) }
+	end
+	local fr = Features.shopAction(player, p, req)
+	if fr then
+		Profiles.markDirty(player)
+		push(player)
+		return fr
 	end
 	return { ok = false }
 end
@@ -1054,6 +1074,7 @@ local function checkStreak(player: Player, p)
 		return
 	end
 	local count = if p.streak.day == day - 1 then p.streak.count + 1 else 1
+	Features.onStreak(p, p.streak.count, count) -- (a broken streak can be restored today)
 	p.streak = { day = day, count = count }
 	local slot = ((count - 1) % #Config.STREAK) + 1
 	local coins = math.floor(Config.STREAK[slot] * tierMult(p))
@@ -1136,6 +1157,8 @@ MarketplaceService.ProcessReceipt = function(info)
 		p.starterLine = true
 	elseif pid == Config.PRODUCTS.LUCKY_LURE and pid ~= 0 then
 		p.luckUntil = math.max(p.luckUntil, os.time()) + Config.LUCK_BOOST_SECONDS
+	elseif Features.grantProduct(player, p, pid) then
+		-- (one of the Nov 2026 products: keep a fish, double a sale, bucket, streak, luck ladder, ad reward)
 	elseif pid == Config.PRODUCTS.SERVER_LUCK and pid ~= 0 then
 		serverLuckUntil = math.max(serverLuckUntil, os.time()) + Config.LUCK_BOOST_SECONDS
 		for _, other in Players:GetPlayers() do
@@ -1504,6 +1527,19 @@ do
 		last[player] = nil
 	end)
 end
+
+Features.init({
+	Profiles = Profiles,
+	State = State,
+	push = push,
+	hasPass = hasPass,
+	fishValue = fishValue,
+	cargoCap = cargoCap,
+	tierMult = tierMult,
+	addToCatalog = addToCatalog,
+	casts = casts,
+	track = track,
+})
 
 Players.PlayerAdded:Connect(function(player)
 	local p = Profiles.load(player)

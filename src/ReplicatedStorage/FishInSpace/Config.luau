@@ -460,4 +460,123 @@ C.QUESTS = {
 }
 C.STREAK = { 100, 150, 250, 400, 600, 900, 1500 } -- x the area multiplier; day 7 also gives a Rare Boost
 
+---------------------------------------------------------------- FEATURES (Nov 2026 update; the code lives in
+-- ServerScriptService.FishInSpace.Features and FishClient.Features). Every number here is a starting guess:
+-- check it in play tests and the Creator Dashboard, and change it here.
+
+-- VISION: "Cozy cosmic fishing with thrilling catches." New features should be relaxing to do and exciting when a
+-- big fish bites. If a feature makes the game stressful or pushy, it doesn't fit.
+
+-- METEOR SHOWER: a free server-wide event. Announced `warn` seconds ahead; while it's on, every area's rarest fish
+-- show up twice as often for everyone (like a Rare Boost) and meteors fill the sky. In a private server the owner
+-- can start one from Settings (once every hostCooldown seconds).
+C.METEOR = { every = 40 * 60, duration = 6 * 60, warn = 120, firstDelay = 8 * 60, hostCooldown = 15 * 60 }
+
+-- PROMO CODES (Settings > Codes). The code is matched in upper case. coins are x the area multiplier.
+-- Add codes for TikTok / Discord / updates here; remove old ones when they expire.
+C.CODES = {
+	FISHINSPACE = { coins = 300 },
+	ZORP = { coins = 150, boostMin = 5 },
+}
+
+-- HOLIDAY FISH: only bite between from and to ({ month, day }, inclusive; to may be in the next year). Once caught they
+-- stay in your catalog for good. base = the fish whose model and picture they use, tinted with tint.
+-- chance = how often a fish in that area is the holiday fish instead.
+C.HOLIDAY_FISH = {
+	{ id = "ghost_guppy", name = "Ghost Guppy", base = "space_guppy", rarity = "Uncommon", layer = 1, value = 70, tint = Color3.fromRGB(205, 235, 255), from = { 10, 15 }, to = { 11, 7 }, chance = 0.08 },
+	{ id = "snow_comet", name = "Snow Comet", base = "comet_tail", rarity = "Rare", layer = 2, value = 420, tint = Color3.fromRGB(235, 248, 255), from = { 12, 10 }, to = { 1, 6 }, chance = 0.06 },
+	{ id = "heart_jelly", name = "Heart Jelly", base = "nebula_jelly", rarity = "Rare", layer = 2, value = 400, tint = Color3.fromRGB(255, 120, 170), from = { 2, 7 }, to = { 2, 21 }, chance = 0.06 },
+}
+-- THE SECRET FISH: catch all four kinds of space junk and a signal appears in The Void. After that the Golden
+-- Leviathan can bite there (chance per Void fish). It isn't on the catalog's checklist, so nobody needs it for 100%.
+C.SECRET_FISH = { id = "golden_leviathan", name = "Golden Leviathan", base = "eclipse_leviathan", rarity = "Epic", layer = 4, value = 12000, tint = Color3.fromRGB(255, 205, 70), chance = 0.04 }
+C.SPECIAL_FISH = {}
+for _, f in C.HOLIDAY_FISH do
+	f.special = true
+	table.insert(C.SPECIAL_FISH, f)
+end
+C.SECRET_FISH.special = true
+table.insert(C.SPECIAL_FISH, C.SECRET_FISH)
+for _, f in C.SPECIAL_FISH do
+	C.BY_ID[f.id] = f
+end
+
+-- is a { month, day } window open on this date (UTC)?
+function C.holidayOpen(f, t: number?): boolean
+	local d = os.date("!*t", t or os.time())
+	local now = d.month * 100 + d.day
+	local a, b = f.from[1] * 100 + f.from[2], f.to[1] * 100 + f.to[2]
+	if a <= b then
+		return now >= a and now <= b
+	end
+	return now >= a or now <= b -- wraps over New Year
+end
+
+-- CRAFTING (Zorp's Workshop): turn fish from your bucket into something useful, so WHICH fish you catch matters.
+-- needs = fish id -> count (any size). reward: boostMin = Rare Boost minutes, coinsMult = coins worth N x the
+-- fish used, line = a fishing line color (kept for good), coins = coins x the area multiplier.
+C.RECIPES = {
+	{ id = "crystal_lure", name = "Crystal Lure", desc = "15 minutes of Rare Boost", needs = { crystal_spiker = 3 }, reward = { boostMin = 15 } },
+	{ id = "comet_feast", name = "Comet Feast", desc = "Zorp pays 3x what these fish are worth", needs = { comet_tail = 2, nebula_jelly = 2 }, reward = { coinsMult = 3 } },
+	{ id = "junk_sculpture", name = "Junk Sculpture", desc = "Space art! Zorp pays 400 coins (x your area)", needs = { lost_satellite = 1, astronaut_boot = 1, cosmic_rubber_duck = 1, space_soda_can = 1 }, reward = { coins = 400 } },
+	{ id = "void_line", name = "Void Line", desc = "A dark purple fishing line, yours to keep", needs = { void_fang = 1, pulsar_reaper = 1 }, reward = { line = "void" } },
+}
+
+-- SURPRISES: now and then a caught fish has a pearl inside (bonus coins = mult x its value). Not announced
+-- beforehand on purpose (surprise rewards keep fishing fun; promised ones can make it feel like a chore).
+C.SURPRISE = { chance = 0.02, mult = 4 }
+
+-- QUEST MASTER: claim all of your daily quests 7 days in a row for the Quest Master line (kept for good).
+C.QUEST_STREAK = { days = 7 }
+
+-- REBIRTH LINES: new line colors as you rebirth (variety for each tier)
+C.REBIRTH_LINES = { { at = 3, key = "nova" }, { at = 10, key = "supernova" } }
+C.LINE_COLORS.master = Color3.fromRGB(110, 255, 200)
+C.LINE_COLORS.void = Color3.fromRGB(150, 70, 255)
+C.LINE_COLORS.nova = Color3.fromRGB(255, 150, 60)
+C.LINE_COLORS.supernova = Color3.fromRGB(255, 250, 220)
+
+-- DEEP-SPACE TRAP: set it before you log off; it catches one fish every perFish seconds from the deepest area you
+-- can fish (up to maxFish, and only as many as fit in your bucket when you collect).
+C.TRAP = { perFish = 30 * 60, maxFish = 16 }
+
+-- THE ABYSS: the bottom of The Void. Fish caught below `from` are worth +bonusPct more, but the space shark hunts there
+-- twice as often.
+C.ABYSS = { from = 2150, bonusPct = 25 }
+-- SPACE SHARK: while you reel a fish up through these areas a shark may come for it. Reel it out of the area (or
+-- above `escape` depth) before it reaches your hook, or it takes one fish. chance = per cast with a fish on the hook.
+C.SHARK = { layers = { [3] = true, [4] = true }, chance = 0.3, speed = 95, startDelay = { 0.6, 2.2 }, escape = 840 }
+
+-- FISHING CREW: each other player fishing from the same dock adds bonusPct to your catches (up to max).
+C.CREW = { bonusPct = 5, max = 15 }
+
+-- MOMENT-OF-NEED PRODUCTS (create these developer products in the Creator Dashboard and paste their IDs here; while
+-- an ID is 0 the offer simply doesn't appear):
+--   KEEP_FISH       right after a Rare/Epic gets away: land it after all
+--   DOUBLE_SALE     right after you sell: the same coins again
+--   BUCKET_PLUS     when your bucket is full: +BUCKET_PLUS slots until you leave the server
+--   STREAK_RESTORE  the day your daily streak breaks: carry on where you were
+--   LUCK_1..LUCK_5  the Luck Upgrade ladder: each level +LUCK_LADDER.pct% for your area's rarest fish (permanent)
+--   AD_BAIT         the reward for a rewarded video ad: LUCK_BOOST_AD minutes of Rare Boost
+C.PRODUCTS.KEEP_FISH = 0
+C.PRODUCTS.DOUBLE_SALE = 0
+C.PRODUCTS.BUCKET_PLUS = 0
+C.PRODUCTS.STREAK_RESTORE = 0
+C.PRODUCTS.LUCK_1, C.PRODUCTS.LUCK_2, C.PRODUCTS.LUCK_3, C.PRODUCTS.LUCK_4, C.PRODUCTS.LUCK_5 = 0, 0, 0, 0, 0
+C.PRODUCTS.AD_BAIT = 0
+C.PRODUCT_PRICES.KEEP_FISH = 29
+C.PRODUCT_PRICES.DOUBLE_SALE = 19
+C.PRODUCT_PRICES.BUCKET_PLUS = 25
+C.PRODUCT_PRICES.STREAK_RESTORE = 25
+C.PRODUCT_PRICES.LUCK_1, C.PRODUCT_PRICES.LUCK_2, C.PRODUCT_PRICES.LUCK_3, C.PRODUCT_PRICES.LUCK_4, C.PRODUCT_PRICES.LUCK_5 = 9, 19, 29, 49, 79
+C.BUCKET_PLUS = 20
+C.LUCK_LADDER = { pct = 5, max = 5 }
+C.LUCK_BOOST_AD = 5 -- minutes
+C.KEEP_FISH_SECONDS = 20 -- how long the "keep it" offer stays up
+C.DOUBLE_SALE_SECONDS = 20
+
+-- IN-WORLD OUTLINES: a soft dark outline on the main characters and stands, to match the toon HUD icons
+-- (Highlights; Roblox draws at most ~31 at once). Off in Low Graphics.
+C.OUTLINES = { enabled = true, color = Color3.fromRGB(20, 10, 40), names = { "QuestAlien", "Merchant", "PassStands" } }
+
 return C

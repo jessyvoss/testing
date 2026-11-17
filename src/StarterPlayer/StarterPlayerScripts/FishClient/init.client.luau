@@ -18,6 +18,7 @@ local Settings = require(script:WaitForChild("Settings"))
 local Sounds = require(script:WaitForChild("Sounds"))
 local Dialog = require(script:WaitForChild("Dialog"))
 local Tutorial = require(script:WaitForChild("Tutorial"))
+local Features = require(script:WaitForChild("Features")) -- the Nov 2026 features (workshop, meteor shower, offers, ...)
 
 local player = Players.LocalPlayer
 local profile = nil
@@ -129,8 +130,7 @@ local function updateQuest(p)
 		missingLabel.TextColor3 = Ui.GOLD
 	end
 	View.setGoldLine(found >= #Config.FISH)
-	local LC = Config.LINE_COLORS
-	View.setLineColor(if p.passes and p.passes.GOD_ROD then LC.god elseif p.passes and p.passes.VIP then LC.vip elseif p.starterLine then LC.starter else LC.default)
+	View.setLineColor(Features.lineColor(p)) -- (God Rod, rebirth, Quest Master, crafted, VIP, Starter lines)
 end
 
 local side = Ui.frame(hud, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 18, 0.5, 40), Size = UDim2.fromOffset(92, 520) })
@@ -452,6 +452,7 @@ local function applyProfile(p)
 	updateQuest(p)
 	updateBadges()
 	updateSide()
+	Features.onProfile(p)
 end
 
 -- luck boost countdown
@@ -586,6 +587,7 @@ local function startFishing()
 	task.spawn(prefetchCast)
 	musicButton.Visible = false
 	guide.Text = ""
+	Features.setFishing(true)
 end
 
 local function stopFishing()
@@ -607,6 +609,7 @@ local function stopFishing()
 	leaveButton.Visible = false
 	questPanel.Visible = hasQuest
 	autoButton.Visible = false
+	Features.setFishing(false)
 end
 
 fishButton.Activated:Connect(startFishing)
@@ -754,6 +757,9 @@ View.init({
 	onState = function(s)
 		Tutorial.signal("state", s)
 	end,
+	onLost = function(index, def)
+		Features.onLost(index, def) -- (the "land it anyway" offer)
+	end,
 })
 
 local function pressed(input: InputObject): boolean
@@ -815,6 +821,7 @@ end)
 ---------------------------------------------------------------- server messages
 
 Menus.init()
+Features.init({ Menus = Menus, side = side })
 Music.start()
 UserInputService.InputBegan:Connect(function(input, processed)
 	if not processed and input.KeyCode == Enum.KeyCode.M then
@@ -878,7 +885,11 @@ Remotes.State.OnClientEvent:Connect(function(msg)
 		Sounds.play("sparkle")
 		Menus.toast("Quest complete: " .. msg.text, Ui.GREEN)
 		Menus.refreshQuests()
-	elseif msg.type == "rebirth" and (msg.who == player.DisplayName or Settings.get("announce")) then
+	elseif msg.type == "feature" then
+		Features.onMessage(msg)
+	elseif msg.type == "rebirth" and msg.who == player.DisplayName then
+		Features.onRebirth(msg) -- your own rebirth: the full-screen celebration
+	elseif msg.type == "rebirth" and Settings.get("announce") then
 		Menus.toast(("%s reached REBIRTH %d!"):format(msg.who, msg.n or 1), Ui.GOLD)
 	elseif msg.type == "serverLuck" and Settings.get("announce") then
 		Menus.toast(msg.who .. " started a SERVER RARE BOOST for everyone!", Ui.GOLD)

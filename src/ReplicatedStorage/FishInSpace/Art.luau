@@ -81,4 +81,12 @@ A.fish = {
 	space_soda_can = "rbxassetid://127228310753941",
 }
 
+-- holiday fish and the secret fish use the picture of the fish they're based on (Config.SPECIAL_FISH)
+do
+	local Config = require(script.Parent:WaitForChild("Config"))
+	for _, f in Config.SPECIAL_FISH do
+		A.fish[f.id] = A.fish[f.id] or A.fish[f.base]
+	end
+end
+
 return A

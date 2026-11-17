@@ -195,12 +195,24 @@ end
 
 ---------------------------------------------------------------- windows
 
+local render = {}
+
 local function window(name: string, title: string, size: Vector2)
 	local w = Ui.window(gui, title, size, function()
 		Menus.close(name)
 	end)
 	solid(w, 12)
 	windows[name] = w
+	return w
+end
+
+-- other modules (FishClient.Features) add their own windows: same look, same open/close rules
+Menus.windows = windows
+function Menus.newWindow(name: string, title: string, size: Vector2, renderFn: (() -> ())?)
+	local w = window(name, title, size)
+	if renderFn then
+		render[name] = renderFn
+	end
 	return w
 end
 
@@ -231,7 +243,6 @@ function Menus.anyOpen(): boolean
 	return false
 end
 
-local render = {}
 
 -- analytics: tell the server when the Robux Shop opens or a purchase prompt shows (the server checks and logs it)
 local shopSource: string? = nil
@@ -539,7 +550,16 @@ render.catalog = function()
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.Parent = catBody
 	local order = 0
-	for _, f in Config.FISH do
+	-- holiday fish (in season, or once caught) and the secret fish (once caught) join the end of their area's page;
+	-- they don't count toward the total, so nobody needs them for 100%
+	local list = table.clone(Config.FISH)
+	for _, sf in Config.SPECIAL_FISH do
+		local season = sf ~= Config.SECRET_FISH and Config.holidayOpen(sf)
+		if profile.catalog[sf.id] or season then
+			table.insert(list, sf)
+		end
+	end
+	for _, f in list do
 		if f.layer == catalogLayer then
 			order += 1
 			local e = profile.catalog[f.id]
