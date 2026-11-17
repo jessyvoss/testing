@@ -55,7 +55,7 @@ pill(cargoPanel)
 Ui.image(cargoPanel, Art.icon.cargo, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 8, 0.5, 0), Size = UDim2.fromOffset(50, 50) })
 local cargoLabel = Ui.label(cargoPanel, { Text = "Bucket: 0 / 10", Font = Ui.TECH, TextSize = 20, Position = UDim2.fromOffset(64, 6), Size = UDim2.fromOffset(220, 24) })
 local _, setCargo = Ui.meter(cargoPanel, 10, { Position = UDim2.fromOffset(64, 34), Size = UDim2.fromOffset(214, 14) }, Color3.fromRGB(90, 190, 255))
-local luckLabel = Ui.label(hud, { Text = "", Font = Ui.TECH, TextSize = 17, TextColor3 = Ui.GOLD, Position = UDim2.fromOffset(20, 84), Size = UDim2.fromOffset(460, 22), Visible = false })
+local luckLabel = Ui.label(hud, { Text = "", Font = Ui.TECH, TextSize = 17, TextColor3 = Ui.GOLD, Position = UDim2.fromOffset(20, 84), Size = UDim2.fromOffset(760, 22), Visible = false })
 
 -- Zorp's fish quest (top right): which fish, caught or not, the reward, and unique fish caught
 -- only shows while you have a quest from Zorp, and only that quest
@@ -460,12 +460,27 @@ task.spawn(function()
 	while true do
 		task.wait(1)
 		if profile then
-			local left = (profile.luckUntil or 0) - (profile.now or 0) - (os.clock() - (profile._at or os.clock()))
-			luckLabel.Visible = left > 0
+			local now = (profile.now or 0) + (os.clock() - (profile._at or os.clock()))
+			local left = (profile.luckUntil or 0) - now
+			-- the Meteor Shower shares this line (under the coin and bucket pills), so it never covers anything
+			local mUntil = workspace:GetAttribute("MeteorUntil") or 0
+			local mNext = workspace:GetAttribute("MeteorNext") or 0
+			local function clock(s)
+				return ("%d:%02d"):format(math.floor(s / 60), math.floor(s % 60))
+			end
+			local parts = {}
+			if now < mUntil then
+				table.insert(parts, "METEOR SHOWER  " .. clock(mUntil - now) .. "  ·  RARE FISH x2")
+			elseif mNext > now and mNext - now <= Config.METEOR.warn then
+				table.insert(parts, "METEOR SHOWER IN " .. clock(mNext - now))
+			end
 			if left > 0 then
 				-- what the boost does where you fish, e.g. "RARE BOOST 12:34 · EPICS 30% → 46%"
-				luckLabel.Text = ("RARE BOOST  %d:%02d  ·  %s"):format(math.floor(left / 60), math.floor(left % 60), Config.boostText(Config.tierOf(profile.upgrades)))
+				table.insert(parts, ("RARE BOOST  %s  ·  %s"):format(clock(left), Config.boostText(Config.tierOf(profile.upgrades))))
 			end
+			luckLabel.Visible = #parts > 0
+			luckLabel.Text = table.concat(parts, "     ")
+			luckLabel.TextColor3 = if now < mUntil then Color3.fromRGB(255, 170, 90) else Ui.GOLD
 		end
 	end
 end)
@@ -821,7 +836,7 @@ end)
 ---------------------------------------------------------------- server messages
 
 Menus.init()
-Features.init({ Menus = Menus, side = side })
+Features.init({ Menus = Menus, side = side, View = View })
 Music.start()
 UserInputService.InputBegan:Connect(function(input, processed)
 	if not processed and input.KeyCode == Enum.KeyCode.M then

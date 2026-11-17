@@ -469,10 +469,20 @@ function Ui.window(parent: Instance, title: string, size: Vector2, onClose: () -
 	local function fit()
 		local cam = workspace.CurrentCamera
 		local vp = if cam then cam.ViewportSize else Vector2.new(1280, 800)
-		-- phones (short screens): use almost the whole screen, so windows (and their text) stay as big as possible
+		-- Big screens: the window is shrunk as a whole until it fits. Phones: shrinking a 640-tall window into a
+		-- ~375-tall screen made text about half size (unreadable), so the window never shrinks below MIN_SCALE;
+		-- instead it gets shorter/narrower itself (its lists scroll), filling the screen at a readable size.
+		local MIN_SCALE = 0.72
 		local small = vp.Y < 500
 		local mY, mX = if small then 12 else 60, if small then 12 else 30
-		scale.Scale = math.clamp(math.min((vp.Y - mY) / size.Y, (vp.X - mX) / size.X), 0.45, 1)
+		local fitScale = math.min((vp.Y - mY) / size.Y, (vp.X - mX) / size.X)
+		if fitScale >= MIN_SCALE then
+			scale.Scale = math.min(fitScale, 1)
+			w.Size = UDim2.fromOffset(size.X, size.Y)
+		else
+			scale.Scale = MIN_SCALE
+			w.Size = UDim2.fromOffset(math.min(size.X, (vp.X - mX) / MIN_SCALE), math.min(size.Y, (vp.Y - mY) / MIN_SCALE))
+		end
 	end
 	fit()
 	if workspace.CurrentCamera then

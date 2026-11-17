@@ -27,7 +27,7 @@ local Menus -- set in init
 local profile = nil
 local fishing = false
 local gui: ScreenGui
-local meteorLabel: TextLabel
+local View -- FishingView (set in init): offers and the goal line keep out of the way during a fight
 local goalLabel: TextLabel
 local offerCard: ImageLabel?
 local lastOffer: { [string]: number } = {}
@@ -68,7 +68,7 @@ local function closeOffer()
 end
 
 -- key: the product key in Config.PRODUCTS; cooldown: don't offer the same thing more often than this
-local function offer(key: string, title: string, sub: string, seconds: number, cooldown: number?)
+local function offerNow(key: string, title: string, sub: string, seconds: number, cooldown: number?)
 	local id = Config.PRODUCTS[key] or 0
 	if id == 0 then
 		return
@@ -77,6 +77,14 @@ local function offer(key: string, title: string, sub: string, seconds: number, c
 		return
 	end
 	lastOffer[key] = os.clock()
+	-- never over the fight panel: wait for the fight to end (or give up after a while)
+	local waited = 0
+	while View and View.state() == "fight" and waited < 15 do
+		waited += task.wait(0.25)
+	end
+	if View and View.state() == "fight" then
+		return
+	end
 	closeOffer()
 	local card = Ui.panel(gui, { AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -170), Size = UDim2.fromOffset(460, 110), ZIndex = 40 }, true)
 	offerCard = card
@@ -87,7 +95,7 @@ local function offer(key: string, title: string, sub: string, seconds: number, c
 	Ui.setStyle(no, "grey")
 	local t = no:FindFirstChild("Text") :: TextLabel
 	if t then
-		t.TextSize = 12
+		t.TextSize = 13 -- (the style guide's smallest size)
 	end
 	buy.Activated:Connect(function()
 		local sig = Remotes:FindFirstChild("AnalyticsSignal")
@@ -105,6 +113,10 @@ local function offer(key: string, title: string, sub: string, seconds: number, c
 		end
 	end)
 end
+-- (offers may wait for a fight to end, so they run on their own thread)
+local function offer(...)
+	task.spawn(offerNow, ...)
+end
 
 ---------------------------------------------------------------- next goal (while fishing)
 
@@ -120,12 +132,13 @@ local function nextGoalText(p): string?
 	local n = Config.areaNeeds(tier + 1)
 	local parts = {}
 	local function part(name, have, need)
-		table.insert(parts, ("%s %d/%d%s"):format(name, math.min(have, need), need, if have >= need then " ✓" else ""))
+		-- (the game's fonts have no tick/cross symbols, so finished ones just say OK)
+		table.insert(parts, ("%s %d/%d%s"):format(name, math.min(have, need), need, if have >= need then " OK" else ""))
 	end
 	part("LINE", p.upgrades.tether or 0, n.tether)
 	part("THROW", p.upgrades.throw or 0, n.throw)
 	local baitName = Config.UPGRADES.lure.names[n.lure + 1] or "BAIT"
-	table.insert(parts, string.upper(baitName) .. (if (p.upgrades.lure or 0) >= n.lure then " ✓" else " ✗"))
+	table.insert(parts, string.upper(baitName) .. (if (p.upgrades.lure or 0) >= n.lure then " OK" else " NEEDED"))
 	return "NEXT: " .. string.upper(L.name) .. "  ·  " .. table.concat(parts, "  ·  ")
 end
 
@@ -134,7 +147,7 @@ local function updateGoal()
 		return
 	end
 	local text = profile and fishing and nextGoalText(profile)
-	goalLabel.Visible = text ~= nil
+	goalLabel.Visible = text ~= nil and not (View and View.state() == "fight")
 	goalLabel.Text = text or ""
 end
 
@@ -219,23 +232,12 @@ local function meteorStreak()
 	end)
 end
 
+-- (the countdown text is on the boost line under the coin pill: FishClient's luck countdown)
 local function updateMeteor(now: number)
 	local untilT = workspace:GetAttribute("MeteorUntil") or 0
-	local nextT = workspace:GetAttribute("MeteorNext") or 0
-	if now < untilT then
-		meteorLabel.Visible = true
-		meteorLabel.Text = "☄ METEOR SHOWER!  RARE FISH x2  ·  " .. fmtTime(untilT - now)
-		meteorLabel.TextColor3 = Color3.fromRGB(255, 170, 90)
-		if os.clock() - lastStreak > (if Settings.get("lowGfx") then 0.9 else 0.3) then
-			lastStreak = os.clock()
-			meteorStreak()
-		end
-	elseif nextT > now and nextT - now <= Config.METEOR.warn then
-		meteorLabel.Visible = true
-		meteorLabel.Text = "☄ METEOR SHOWER IN " .. fmtTime(nextT - now)
-		meteorLabel.TextColor3 = Ui.GOLD
-	else
-		meteorLabel.Visible = false
+	if now < untilT and os.clock() - lastStreak > (if Settings.get("lowGfx") then 0.9 else 0.3) then
+		lastStreak = os.clock()
+		meteorStreak()
 	end
 end
 
@@ -648,9 +650,10 @@ function Features.init(ctx)
 	Menus = ctx.Menus
 	gui = Ui.gui("Features", 7)
 	meteorFolder.Parent = workspace
-	meteorLabel = Ui.label(gui, { Text = "", Font = Ui.TITLE, TextSize = 20, TextColor3 = Ui.GOLD, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 16), Size = UDim2.fromOffset(620, 28), Visible = false })
-	meteorLabel.TextStrokeTransparency = 0.3
-	goalLabel = Ui.label(gui, { Text = "", Font = Ui.TECH, TextSize = 16, TextColor3 = Ui.CYAN, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 24, 1, -150), Size = UDim2.fromOffset(720, 22), Visible = false })
+	View = ctx.View
+	-- the next goal sits just above the depth panel (bottom left), wraps instead of running under the fight panel,
+	-- and hides during a fight
+	goalLabel = Ui.label(gui, { Text = "", Font = Ui.TECH, TextSize = 15, TextColor3 = Ui.CYAN, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Bottom, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 24, 1, -148), Size = UDim2.fromOffset(400, 40), Visible = false })
 	goalLabel.TextStrokeTransparency = 0.3
 
 	-- Zorp's Workshop: a side button and its window
@@ -686,6 +689,7 @@ function Features.init(ctx)
 	task.spawn(function()
 		while true do
 			updateMeteor(serverNow())
+			updateGoal() -- (hides during a fight)
 			task.wait(0.25)
 		end
 	end)

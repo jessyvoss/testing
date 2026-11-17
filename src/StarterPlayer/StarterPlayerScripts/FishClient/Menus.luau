@@ -511,6 +511,18 @@ local function renderStore(kind: string)
 		card(Art.ui.coin, "Coin Pouch", "+" .. Ui.coinText(Config.coinPack("COINS_SMALL", up)) .. " coins. Grows as you go deeper.", Config.PRODUCTS.COINS_SMALL, PR, false)
 		card(Art.ui.coin, "Coin Sack", "+" .. Ui.coinText(Config.coinPack("COINS_MEDIUM", up)) .. " coins. Grows as you go deeper.", Config.PRODUCTS.COINS_MEDIUM, PR, false)
 		card(Art.ui.coin, "Coin Chest", "+" .. Ui.coinText(Config.coinPack("COINS_LARGE", up)) .. " coins. Best value!", Config.PRODUCTS.COINS_LARGE, PR, false)
+		-- the Nov 2026 products (each card only appears once its product ID is set in Config.PRODUCTS)
+		local lv = profile.luckLadder or 0
+		local nextLuck = Config.PRODUCTS["LUCK_" .. (lv + 1)] or 0
+		if nextLuck ~= 0 then
+			card(Art.icon.luck, ("Luck Upgrade %d"):format(lv + 1), ("Your area's rarest fish show up %d%% more often. Permanent (level %d of %d)."):format(Config.LUCK_LADDER.pct, lv + 1, Config.LUCK_LADDER.max), nextLuck, PR, false)
+		end
+		if Config.PRODUCTS.BUCKET_PLUS ~= 0 then
+			card(Art.icon.cargo, "Bucket +" .. Config.BUCKET_PLUS, ("+%d bucket slots until you leave this server."):format(Config.BUCKET_PLUS), Config.PRODUCTS.BUCKET_PLUS, PR, false)
+		end
+		if Config.PRODUCTS.STREAK_RESTORE ~= 0 and profile.lostStreak then
+			card(Art.icon.gift, "Restore Streak", ("Missed a day? Keep your %d-day streak. Today only."):format(profile.lostStreak), Config.PRODUCTS.STREAK_RESTORE, PR, false)
+		end
 	end
 end
 render.shop = function()
@@ -555,7 +567,7 @@ render.catalog = function()
 	local list = table.clone(Config.FISH)
 	for _, sf in Config.SPECIAL_FISH do
 		local season = sf ~= Config.SECRET_FISH and Config.holidayOpen(sf)
-		if profile.catalog[sf.id] or season then
+		if profile.catalog[sf.id] or season or sf == Config.SECRET_FISH then -- (the secret fish always shows, as a hint card)
 			table.insert(list, sf)
 		end
 	end
@@ -596,7 +608,14 @@ render.catalog = function()
 					end
 				end)
 			else
-				Ui.label(card, { Text = "NOT CAUGHT YET", Font = Ui.TECH, TextSize = 13, TextColor3 = Ui.MUTED, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(1, 0, 0, 16), ZIndex = 13 })
+				-- the secret fish gives a hint instead (and a stronger one once the signal has appeared)
+				local hint = if f == Config.SECRET_FISH then (if profile.secret then "A SIGNAL FROM THE VOID..." else "CATCH EVERY KIND OF JUNK") else "NOT CAUGHT YET"
+				Ui.label(card, { Text = hint, Font = Ui.TECH, TextSize = 13, TextColor3 = if f == Config.SECRET_FISH then Ui.GOLD else Ui.MUTED, TextXAlignment = Enum.TextXAlignment.Center, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(1, 0, 0, 16), ZIndex = 13 })
+			end
+			-- holiday and secret fish get a corner tag
+			if f.special then
+				local tag = if f == Config.SECRET_FISH then "SECRET" else (if Config.holidayOpen(f) then "LIMITED TIME" else "HOLIDAY")
+				Ui.label(card, { Text = tag, Font = Ui.TECH, TextSize = 13, TextColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0, BackgroundColor3 = if f == Config.SECRET_FISH then Color3.fromRGB(190, 140, 20) else Color3.fromRGB(200, 60, 120), TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(104, 20), ZIndex = 15 })
 			end
 		end
 	end

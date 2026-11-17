@@ -290,9 +290,26 @@ local Settings = require(script.Parent:WaitForChild("Settings"))
 local shakeAmp = 0 -- camera shake strength, as a fraction of the view height (decays quickly)
 local hitStop = 0 -- seconds left of the impact pause
 local slowMo = 0 -- seconds left of slow motion
--- a controller rumble for the big moments (gamepads only; phones don't expose vibration to games)
+-- a buzz for the big moments: a HapticEffect on touch devices (phones that support it), the motor on gamepads
 local HapticService = game:GetService("HapticService")
+local UIS = game:GetService("UserInputService")
 local function rumble(strength: number, seconds: number)
+	if UIS.TouchEnabled and not UIS.GamepadEnabled then
+		pcall(function()
+			local e = Instance.new("HapticEffect")
+			e.Type = Enum.HapticEffectType.Custom
+			e:SetWaveformKeys({
+				FloatCurveKey.new(0, strength, Enum.KeyInterpolationMode.Constant),
+				FloatCurveKey.new(seconds * 1000, 0, Enum.KeyInterpolationMode.Constant),
+			})
+			e.Parent = workspace
+			e:Play()
+			task.delay(seconds + 0.5, function()
+				e:Destroy()
+			end)
+		end)
+		return
+	end
 	pcall(function()
 		local dev = Enum.UserInputType.Gamepad1
 		if HapticService:IsVibrationSupported(dev) and HapticService:IsMotorSupported(dev, Enum.VibrationMotor.Large) then
